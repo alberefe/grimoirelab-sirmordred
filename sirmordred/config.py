@@ -29,8 +29,9 @@ from typing import Any, Dict, TypeVar, Union
 
 from sirmordred.task import Task
 from grimoire_elk.utils import get_connectors
+from grimoire_elk.utils import build_url
+from enigma.enigma import get_secret
 
-# from enigma import enigma
 
 logger = logging.getLogger(__name__)
 
@@ -865,6 +866,8 @@ class Config():
     def __read_conf_files(self):
         logger.debug("Reading conf files")
         self.conf = {}
+
+        # read all configuration files
         for conf_file in self.conf_list:
             logger.debug("Reading conf files: %s", conf_file)
             parser = configparser.ConfigParser()
@@ -872,6 +875,69 @@ class Config():
             raw_conf = {s: dict(parser.items(s)) for s in parser.sections()}
             conf = self.__add_types(raw_conf)
             self._add_to_conf(conf)
+
+        # Get secrets manager if configured
+        secrets_manager = self.conf.get('general', {}).get('secrets_manager')
+
+        if secrets_manager:
+            logger.debug("Using secrets manager: %s", secrets_manager)
+
+            # Process all sections
+            for section_name, section_data in self.conf.items():
+                # Skip general section since it contains the secrets_manager config
+                if section_name == 'general':
+                    continue
+
+                # Process each key in the section
+                for key, value in list(section_data.items()):
+                    # Check if key is a credential field
+                    if self._is_credential_key(key):
+                        try:
+                            # Get base service name (e.g., 'github' from 'github:pull')
+                            service_name = section_name.split(':')[0]
+                            # Get credential from secrets manager
+                            secret = get_secret(secrets_manager, service_name, key)
+                            # Replace the value in config
+                            self.conf[section_name][key] = secret
+                            logger.debug(f"Retrieved credential {key} for {service_name} from {secrets_manager}")
+                        except Exception as e:
+                            logger.error(f"Failed to get credential {key} for {section_name}: {str(e)}")
+                            raise
+
+            # Process URLs to add credentials if secrets manager is configured
+            # Process collection URL elasticsearch
+            if 'es_collection' in self.conf:
+                service_name = 'elasticsearch'
+                username = get_secret(secrets_manager, service_name, "username")
+                password = get_secret(secrets_manager, service_name, "password")
+                self.conf['es_collection']['url'] = build_url(
+                    self.conf['es_collection']['url'],
+                    username,
+                    password
+                )
+
+            # Process Elasticsearch enrichment URL
+            if 'es_enrichment' in self.conf:
+                service_name = 'elasticsearch'
+                username = get_secret(secrets_manager, service_name, "username")
+                password = get_secret(secrets_manager, service_name, "password")
+                self.conf['es_enrichment']['url'] = build_url(
+                    self.conf['es_enrichment']['url'],
+                    username,
+                    password
+                )
+
+            # Process Kibiter URL if present
+            if 'panels' in self.conf and 'kibiter_url' in self.conf['panels']:
+                service_name = 'kibiter'
+                username = get_secret(secrets_manager, service_name, "username")
+                password = get_secret(secrets_manager, service_name, "password")
+                self.conf['panels']['kibiter_url'] = build_url(
+                    self.conf['panels']['kibiter_url'],
+                    username,
+                    password
+                )
+
         self.check_config(self.conf)
 
     def _is_credential_key(self, key: str) -> bool:
