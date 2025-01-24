@@ -897,6 +897,8 @@ class Config():
                             service_name = section_name.split(':')[0]
                             # Get credential from secrets manager
                             secret = get_secret(secrets_manager, service_name, key)
+                            if service_name == "github":
+                                secret = secret.split("|")
                             # Replace the value in config
                             self.conf[section_name][key] = secret
                             logger.debug(f"Retrieved credential {key} for {service_name} from {secrets_manager}")
